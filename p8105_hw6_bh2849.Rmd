@@ -156,10 +156,109 @@ or_plot = cities_glm %>%
 or_plot
 ```
 
- *On the plot, we can see that most of the cities have odd ratio between 0 and 1 for solving homicides comparing male victims to female victims, which means that the odds of having a resolved homicide among male victims is lower than the odds of having a resolved homicide among female victims in those cities, adjusting for victim age and victim race. 
+ * On the plot, we can see that most of the cities have odd ratio between 0 and 1 for solving homicides comparing male victims to female victims, which means that the odds of having a resolved homicide among male victims is lower than the odds of having a resolved homicide among female victims in those cities, adjusting for victim age and victim race. 
+ 
+ * `New York, NY` has the lowest adjusted odds ratio, and `Albuquerque, MM` has the highest adjusted odds ratio.
 
- *`New York, NY` has the lowest adjusted odds ratio, and `Albuquerque, MM` has the highest adjusted odds ratio.
-
- *`Fresno, CA`, `Stockton, CA` and `Albuquerque, NM` are the 3 cities with the highest adjusted ORs, the wide 95% CI indicating there may be a high variability in these estimates rather than an effect of victim sex on solving homicides.
+ * `Fresno, CA`, `Stockton, CA` and `Albuquerque, NM` are the 3 cities with the highest adjusted ORs, the wide 95% CI showing there may be a high variability in these estimates rather than an effect of victim sex on solving homicides.
  
  
+### Problem 3
+
+#### Load and Tidy Data
+
+```{r}
+birthweight_data = read_csv("./data/birthweight.csv")
+
+birthweight_data = birthweight_data %>% 
+  janitor::clean_names() %>% 
+  mutate(
+    babysex = as.factor(babysex),
+    frace = as.factor(frace),
+    malform = as.factor(malform),
+    mrace = as.factor(mrace)
+    )
+
+```
+
+There are `r sum(is.na(birthweight_data))` missing data, so we don't need to worry about that. 
+
+#### Model 1 
+
+```{r}
+m1 = lm(bwt ~ wtgain + mheight, data = birthweight_data)
+
+summary(m1) %>% 
+  broom::tidy()
+
+m1_plot = birthweight_data %>% 
+  select(bwt, wtgain, mheight) %>% 
+  modelr::add_residuals(m1) %>% 
+  modelr::add_predictions(m1) %>% 
+  ggplot(aes(x = pred, y = resid)) + 
+  geom_violin() +
+  geom_point(alpha = 0.5)  +
+  labs(title = "Predictions vs. Residuals",
+       x = "Predictions", 
+       y = "Residuals",) +
+  theme(plot.title = element_text(hjust = 0.5))
+  
+m1_plot
+```
+
+
+* I picked the variable `wtgain` and `mheight` as the predictor for model 1 based on a hypothesized structure for the factors that underly birthweight. I think mother’s weight gain and height during pregnancy is closely related to baby's birthweight. 
+* The `Prediction vs Residual` plot generated shows a big cluster of points around fitted values equal 2000 - 4000 where the model residuals tend to evenly distributed around 0.
+
+#### Model 2 & Model 3
+
+```{r}
+m2 = lm(bwt ~ blength + gaweeks, data = birthweight_data)
+
+summary(m2) %>% 
+  broom::tidy()
+
+m3 = lm(bwt ~ bhead + blength + babysex + bhead * blength + bhead * babysex + blength * babysex + bhead * blength * babysex, data = birthweight_data)
+
+summary(m3) %>% 
+  broom::tidy()
+```
+
+#### Croddvalidation 
+
+```{r}
+cv_df = crossv_mc(birthweight_data, 100) %>% 
+  mutate(train = map(train, as_tibble),
+         test = map(test, as_tibble)) %>% 
+  mutate(m1_cv = map(train, ~lm(bwt ~ wtgain + mheight, data = .x)),
+         m2_cv = map(train, ~lm(bwt ~ blength + gaweeks, data = .x)),
+         m3_cv = map(train, ~lm(bwt ~ bhead + blength + babysex + bhead*blength + bhead*babysex + blength*babysex + bhead*blength*babysex, data = .x))) %>% 
+  mutate(rmse_m1 = map2_dbl(m1_cv, test, ~rmse(model = .x, data = .y)),
+         rmse_m2 = map2_dbl(m2_cv, test, ~rmse(model = .x, data = .y)), 
+         rmse_m3 = map2_dbl(m3_cv, test, ~rmse(model = .x, data = .y)))
+```
+
+
+```{r}
+
+cv_plot = cv_df %>% 
+  select(starts_with("rmse")) %>% 
+  pivot_longer(everything(),
+               names_to = "model",
+               values_to = "rmse",
+               names_prefix = "rmse_") %>% 
+  ggplot(aes(x = model, y = rmse)) + 
+  geom_violin() +
+  labs (
+    title = "Cross Validation Comparisons",
+    x = "Model",
+    y = "RMSE"
+  )
+
+cv_plot
+```
+
+
+* From the plot, we can see that model 1 has the highest RMSE and model 3 has the lowest RMSE. 
+* We should select model 3 as a better choice to predict birth weight of babies because the lower RMSE the better. 
+
