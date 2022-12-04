@@ -88,10 +88,78 @@ As with $r^2$, this distribution is somewhat skewed and has some outliers.
 
 The point of this is not to say you should always use the bootstrap -- it's possible to establish "large sample" distributions for strange parameters / values / summaries in a lot of cases, and those are great to have. But it is helpful to know that there's a way to do inference even in tough cases. 
 
-### Problem 2 
+### Problem 2
 
-```{r}
+#### Load and Tidy the Data
 
+```{r message=FALSE}
+homicides_data = read_csv("./data/homicide-data.csv")
 
+homicides_data = homicides_data %>% 
+  janitor::clean_names() %>% 
+  mutate(city_state = str_c(city, state, sep = "_")) %>% 
+  filter(!city_state %in% c("Dallas_TX", "Phoenix_AZ", "Kansas City_MO", "Tulsa_AL"), 
+         victim_race %in% c("Black", "White")) %>% 
+  mutate(victim_age = as.numeric(victim_age),
+         resolved = case_when(
+           disposition == "Closed without arrest" ~ 0,
+           disposition == "Open/No arrest" ~ 0,
+           disposition == "Closed by arrest" ~ 1
+         ))
 ```
 
+### Fit Logistic Regression for Baltimore
+```{r glm_baltimore}
+baltimore_glm = homicides_data %>% 
+  filter(city_state == "Baltimore_MD") %>% 
+  glm(resolved ~ victim_age + victim_sex + victim_race, family = binomial(), data = .) %>% 
+  broom::tidy() %>% 
+  mutate(odds_ratio = exp(estimate),
+         CI_lower = exp(estimate - 1.96 * std.error),
+         CI_upper = exp(estimate + 1.96 * std.error)) %>% 
+  filter(term == "victim_sexMale") %>%
+  select(term, odds_ratio, CI_lower, CI_upper) 
+
+baltimore_glm
+```
+
+### For All Cities
+```{r glm_all}
+cities_glm = homicides_data %>% 
+  nest(cities = -city_state) %>%
+  mutate(models = map(.x = cities, ~glm(resolved ~ victim_age + victim_sex + victim_race, family = binomial(), data = .)),
+         results = map(models, broom::tidy)) %>% 
+  select(-models, -cities) %>% 
+  unnest(cols = results) %>% 
+  mutate(odds_ratio = exp(estimate),
+         CI_lower = exp(estimate - 1.96 * std.error),
+         CI_upper = exp(estimate + 1.96 * std.error)) %>% 
+  filter(term == "victim_sexMale") %>% 
+  select(city_state, odds_ratio, CI_lower, CI_upper)
+
+cities_glm
+```
+
+### Plot for adjusted OR and 95% CI
+```{r plot_or}
+or_plot = cities_glm %>% 
+  mutate(city_state = fct_reorder(city_state, odds_ratio)) %>% 
+  ggplot(aes(x = city_state, y = odds_ratio, color = odds_ratio)) +
+  geom_point() +
+  ylim(0, 5) +
+  geom_errorbar(aes(ymin = CI_lower, ymax = CI_upper, width = .3)) + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)) + 
+    labs(
+    x = "Cities",
+    y = "Adjusted odds ratio",
+    title = "Odds Ratio of Solving Homicides in Major U.S. Cities Comparing Male to Female Victims")
+or_plot
+```
+
+ *On the plot, we can see that most of the cities have odd ratio between 0 and 1 for solving homicides comparing male victims to female victims, which means that the odds of having a resolved homicide among male victims is lower than the odds of having a resolved homicide among female victims in those cities, adjusting for victim age and victim race. 
+
+ *`New York, NY` has the lowest adjusted odds ratio, and `Albuquerque, MM` has the highest adjusted odds ratio.
+
+ *`Fresno, CA`, `Stockton, CA` and `Albuquerque, NM` are the 3 cities with the highest adjusted ORs, the wide 95% CI indicating there may be a high variability in these estimates rather than an effect of victim sex on solving homicides.
+ 
+ 
